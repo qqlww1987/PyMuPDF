@@ -1240,28 +1240,28 @@ def cells_to_tables(page, cells) -> list:
     if len(current_cells):
         # ... store it.
         tables.append(list(current_cells))
-
-    # PyMuPDF modification:
-    # Remove tables without text or having only 1 column
-    for i in range(len(tables) - 1, -1, -1):
-        r = EMPTY_RECT()
-        x1_vals = set()
-        x0_vals = set()
-        for c in tables[i]:
-            r |= c
-            x1_vals.add(c[2])
-            x0_vals.add(c[0])
-        if (
-            len(x1_vals) < 2
-            or len(x0_vals) < 2
-            or white_spaces.issuperset(
-                page.get_textbox(
-                    r,
-                    textpage=TEXTPAGE,
-                )
-            )
-        ):
-            del tables[i]
+    # guorq 一列的以及空字符都认为是表格
+    # # PyMuPDF modification:
+    # # Remove tables without text or having only 1 column
+    # for i in range(len(tables) - 1, -1, -1):
+    #     r = EMPTY_RECT()
+    #     x1_vals = set()
+    #     x0_vals = set()
+    #     for c in tables[i]:
+    #         r |= c
+    #         x1_vals.add(c[2])
+    #         x0_vals.add(c[0])
+    #     if (
+    #         len(x1_vals) < 2
+    #         or len(x0_vals) < 2
+    #         or white_spaces.issuperset(
+    #             page.get_textbox(
+    #                 r,
+    #                 textpage=TEXTPAGE,
+    #             )
+    #         )
+    #     ):
+    #         del tables[i]
 
     # Sort the tables top-to-bottom-left-to-right based on the value of the
     # topmost-and-then-leftmost coordinate of a table.
