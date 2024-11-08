@@ -419,3 +419,42 @@ def test_3863():
             # We get small differences in sysinstall tests, where some
             # thirdparty libraries can differ.
             assert rms < 1
+
+def test_3758():
+    # This test requires input file that is not public, so is usually not
+    # available.
+    path = os.path.normpath(f'{__file__}/../../../test_3758.pdf')
+    if not os.path.exists(path):
+        print(f'test_3758(): not running because does not exist: {path=}.')
+        return
+    import json
+    with pymupdf.open(path) as document:
+        for page in document:
+            info = json.loads(page.get_text('json', flags=pymupdf.TEXTFLAGS_TEXT))
+            for block_ind, block in enumerate(info['blocks']):
+                for line_ind, line in enumerate(block['lines']):
+                    for span_ind, span in enumerate(line['spans']):
+                        # print(span)
+                        page.add_redact_annot(pymupdf.Rect(*span['bbox']))
+            page.apply_redactions()
+    wt = pymupdf.TOOLS.mupdf_warnings()
+    assert wt
+
+
+def test_parent():
+    """Test invalidating parent on page re-assignment."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    a = page.add_highlight_annot(page.rect)  # insert annotation on page 0
+    page = doc.new_page()  # make a new page, should orphanate annotation
+    try:
+        print(a)  # should raise
+    except Exception as e:
+        if pymupdf.mupdf_version_tuple >= (1, 25):
+            assert isinstance(e, pymupdf.mupdf.FzErrorArgument)
+            assert str(e) == 'code=4: annotation not bound to any page'
+        else:
+            assert isinstance(e, ReferenceError)
+            assert str(e) == 'weakly-referenced object no longer exists'
+    else:
+        assert 0, f'Failed to get expected exception.'

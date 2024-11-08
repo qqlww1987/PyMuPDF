@@ -80,7 +80,8 @@ Environmental variables:
         For internal testing.
         
     PYMUPDF_SETUP_MUPDF_BUILD
-        If set, overrides location of MuPDF when building PyMuPDF:
+        If unset or '-', use internal hard-coded default MuPDF location.
+        Otherwise overrides location of MuPDF when building PyMuPDF:
             Empty string:
                 Build PyMuPDF with the system MuPDF.
             A string starting with 'git:':
@@ -236,8 +237,8 @@ g_root = os.path.abspath( f'{__file__}/..')
 g_pymupdfb_sdist_marker = 'pymupdfb_sdist'
 
 PYMUPDF_SETUP_PY_LIMITED_API = os.environ.get('PYMUPDF_SETUP_PY_LIMITED_API')
-assert PYMUPDF_SETUP_PY_LIMITED_API in (None, '0', '1'), \
-        f'Should be "0", "1" or undefined: {PYMUPDF_SETUP_PY_LIMITED_API=}.'
+assert PYMUPDF_SETUP_PY_LIMITED_API in (None, '', '0', '1'), \
+        f'Should be "", "0", "1" or undefined: {PYMUPDF_SETUP_PY_LIMITED_API=}.'
 g_py_limited_api = (PYMUPDF_SETUP_PY_LIMITED_API != '0')
 
 PYMUPDF_SETUP_URL_WHEEL =  os.environ.get('PYMUPDF_SETUP_URL_WHEEL')
@@ -526,6 +527,9 @@ def get_mupdf(path=None, sha=None):
     PYMUPDF_SETUP_MUPDF_BUILD; see docs at start of this file for details.
     '''
     m = os.environ.get('PYMUPDF_SETUP_MUPDF_BUILD')
+    if m == '-':
+        # This allows easy specification in Github actions.
+        m = None
     if m is None and os.path.isfile(mupdf_tgz):
         # This makes us use tgz inside sdist.
         log(f'Using local tgz: {mupdf_tgz=}')
@@ -549,6 +553,7 @@ def build():
     # Download MuPDF.
     #
     mupdf_local, mupdf_location = get_mupdf()
+    mupdf_version_tuple = get_mupdf_version(mupdf_local)
 
     build_type = os.environ.get( 'PYMUPDF_SETUP_MUPDF_BUILD_TYPE', 'release')
     assert build_type in ('debug', 'memento', 'release'), \
@@ -640,10 +645,17 @@ def build():
             # Add Windows .lib files.
             mupdf_build_dir2 = _windows_lib_directory(mupdf_local, build_type)
             add('d', f'{mupdf_build_dir2}/mupdfcpp{wp.cpu.windows_suffix}.lib', f'{to_dir_d}/lib/')
+            if mupdf_version_tuple >= (1, 25):
+                # MuPDF-1.25+ language bindings build also builds libmuthreads.
+                add('d', f'{mupdf_build_dir2}/libmuthreads.lib', f'{to_dir_d}/lib/')
         elif darwin:
             add('p', f'{mupdf_build_dir}/_mupdf.so', to_dir)
             add('b', f'{mupdf_build_dir}/libmupdfcpp.so', to_dir)
-            add('b', f'{mupdf_build_dir}/libmupdf.dylib', f'{to_dir}libmupdf.dylib')
+            add('b', f'{mupdf_build_dir}/libmupdf.dylib', to_dir)
+            if mupdf_version_tuple >= (1, 25):
+                # MuPDF-1.25+ language bindings build also builds
+                # libmupdf-threads.a.
+                add('d', f'{mupdf_build_dir}/libmupdf-threads.a', f'{to_dir_d}/lib/')
         elif pyodide:
             add('p', f'{mupdf_build_dir}/_mupdf.so', to_dir)
             add('b', f'{mupdf_build_dir}/libmupdfcpp.so', 'PyMuPDF.libs/')
@@ -652,19 +664,28 @@ def build():
             add('p', f'{mupdf_build_dir}/_mupdf.so', to_dir)
             add('b', pipcl.get_soname(f'{mupdf_build_dir}/libmupdfcpp.so'), to_dir)
             add('b', pipcl.get_soname(f'{mupdf_build_dir}/libmupdf.so'), to_dir)
+            if mupdf_version_tuple >= (1, 25):
+                # MuPDF-1.25+ language bindings build also builds
+                # libmupdf-threads.a.
+                add('d', f'{mupdf_build_dir}/libmupdf-threads.a', f'{to_dir_d}/lib/')
 
         if 'd' in PYMUPDF_SETUP_FLAVOUR:
-            # Add MuPDF headers to `ret_d`. Would prefer to use
+            # Add MuPDF C and C++ headers to `ret_d`. Would prefer to use
             # pipcl.git_items() but hard-coded mupdf tree is not a git
             # checkout.
             #
-            include = f'{mupdf_local}/include'
-            for dirpath, dirnames, filenames in os.walk(include):
-                for filename in filenames:
-                    header_abs = os.path.join(dirpath, filename)
-                    assert header_abs.startswith(include)
-                    header_rel = header_abs[len(include)+1:]
-                    add('d', f'{header_abs}', f'{to_dir_d}/include/{header_rel}')
+            for root in (
+                    f'{mupdf_local}/include',
+                    f'{mupdf_local}/platform/c++/include',
+                    ):
+                for dirpath, dirnames, filenames in os.walk(root):
+                    for filename in filenames:
+                        if not filename.endswith('.h'):
+                            continue
+                        header_abs = os.path.join(dirpath, filename)
+                        assert header_abs.startswith(root)
+                        header_rel = header_abs[len(root)+1:]
+                        add('d', f'{header_abs}', f'{to_dir_d}/include/{header_rel}')
     
     # Add a .py file containing location of MuPDF.
     text = f"mupdf_location='{mupdf_location}'\n"
@@ -887,6 +908,7 @@ def build_mupdf_unix(
     for n, v in env.items():
         command += f' {n}={shlex.quote(v)}'
     command += f' {sys.executable} ./scripts/mupdfwrap.py -d build/{build_prefix}{build_type} -b'
+    #command += f' --m-target libs'
     if PYMUPDF_SETUP_MUPDF_REFCHECK_IF:
         command += f' --refcheck-if "{PYMUPDF_SETUP_MUPDF_REFCHECK_IF}"'
     if PYMUPDF_SETUP_MUPDF_TRACE_IF:
@@ -940,7 +962,7 @@ def _build_extension( mupdf_local, mupdf_build_dir, build_type, g_py_limited_api
     Returns leafname of the generated shared libraries within mupdf_build_dir.
     '''
     (compiler_extra, linker_extra, includes, defines, optimise, debug, libpaths, libs, libraries) \
-        = _extension_flags( mupdf_local, mupdf_build_dir, build_type, g_py_limited_api)
+        = _extension_flags( mupdf_local, mupdf_build_dir, build_type)
     log(f'_build_extension(): {g_py_limited_api=} {defines=}')
     if mupdf_local:
         includes = (
@@ -990,7 +1012,7 @@ def _build_extension( mupdf_local, mupdf_build_dir, build_type, g_py_limited_api
     return path_so_leaf
 
 
-def _extension_flags( mupdf_local, mupdf_build_dir, build_type, g_py_limited_api):
+def _extension_flags( mupdf_local, mupdf_build_dir, build_type):
     '''
     Returns various flags to pass to pipcl.build_extension().
     '''
@@ -1006,9 +1028,6 @@ def _extension_flags( mupdf_local, mupdf_build_dir, build_type, g_py_limited_api
     debug = 'debug' in mupdf_build_dir_flags
     r_extra = ''
     defines = list()
-    log(f'{g_py_limited_api=}')
-    if g_py_limited_api:
-        defines.append(f'Py_LIMITED_API={g_py_limited_api}')
     if windows:
         defines.append('FZ_DLL_CLIENT')
         wp = pipcl.wdev.WindowsPython()
@@ -1130,7 +1149,7 @@ classifier = [
 # We generate different wheels depending on PYMUPDF_SETUP_FLAVOUR.
 #
 
-version_p = '1.24.11'
+version_p = '1.24.13'
 version_b = '1.24.10'
 
 if os.path.exists(f'{g_root}/{g_pymupdfb_sdist_marker}'):
@@ -1319,7 +1338,7 @@ if PYMUPDF_SETUP_URL_WHEEL:
         else:
             assert 0, f'Unrecognised prefix in {PYMUPDF_SETUP_URL_WHEEL=}.'
         
-        log(f'Renaming from {out_path_temp=} to {out_path=}.')
+        log(f'Renaming from:\n    {out_path_temp}\nto:\n    {out_path}.')
         os.rename(out_path_temp, out_path)
         return os.path.basename(out_path)
 else:

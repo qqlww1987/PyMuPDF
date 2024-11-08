@@ -84,8 +84,8 @@ Options:
         current venv.
     --build-flavour <build_flavour>
         Combination of 'p', 'b', 'd'. See ../setup.py's description of
-        PYMUPDF_SETUP_FLAVOUR. Default is 'pb', i.e. self-contained PyMuPDF
-        wheels without MuPDF build-time files.
+        PYMUPDF_SETUP_FLAVOUR. Default is 'pbd', i.e. self-contained PyMuPDF
+        wheels including MuPDF build-time files.
     --build-mupdf 0|1
         Whether to rebuild mupdf when we build PyMuPDF. Default is 1.
     --gdb 0|1
@@ -97,6 +97,8 @@ Options:
     --valgrind 0|1
         Use valgrind in `test` or `buildtest`.
         This will run `sudo apt update` and `sudo apt install valgrind`.
+    --valgrind-args <valgrind_args>
+        Extra args to valgrind.
 
 Commands:
     build
@@ -133,6 +135,13 @@ import textwrap
 
 pymupdf_dir = os.path.abspath( f'{__file__}/../..')
 
+sys.path.insert(0, pymupdf_dir)
+import pipcl
+del sys.path[0]
+
+log = pipcl.log0
+run = pipcl.run
+
 
 def main(argv):
 
@@ -145,11 +154,12 @@ def main(argv):
 
     build_isolation = None
     valgrind = False
+    valgrind_args = ''
     s = True
     build_do = 'i'
     build_type = None
     build_mupdf = True
-    build_flavour = 'pb'
+    build_flavour = 'pbd'
     gdb = False
     test_fitz = False
     implementations = 'r'
@@ -159,6 +169,7 @@ def main(argv):
     timeout = None
     pytest_k = None
     system_site_packages = False
+    pyodide_build_version = None
     
     options = os.environ.get('PYMUDF_SCRIPTS_TEST_options', '')
     options = shlex.split(options)
@@ -188,7 +199,7 @@ def main(argv):
             implementations = next(args)
         elif arg in ('--mupdf', '-m'):
             mupdf = next(args)
-            if not mupdf.startswith('git:'):
+            if not mupdf.startswith('git:') and mupdf != '-':
                 assert os.path.isdir(mupdf), f'Not a directory: {mupdf=}.'
                 mupdf = os.path.abspath(mupdf)
             os.environ['PYMUPDF_SETUP_MUPDF_BUILD'] = mupdf
@@ -216,6 +227,10 @@ def main(argv):
             gdb = int(next(args))
         elif arg == '--valgrind':
             valgrind = int(next(args))
+        elif arg == '--valgrind-args':
+            valgrind_args = next(args)
+        elif arg == '--pyodide-build-version':
+            pyodide_build_version = next(args)
         else:
             assert 0, f'Unrecognised option: {arg=}.'
     
@@ -259,6 +274,7 @@ def main(argv):
         test(
                 implementations=implementations,
                 valgrind=valgrind,
+                valgrind_args=valgrind_args,
                 venv_quick=venv_quick,
                 test_names=test_names,
                 pytest_options=pytest_options,
@@ -281,7 +297,7 @@ def main(argv):
         elif command == 'wheel':
             do_build(wheel=True)
         elif command == 'pyodide_wheel':
-            build_pyodide_wheel()
+            build_pyodide_wheel(pyodide_build_version=pyodide_build_version)
         else:
             assert 0
 
@@ -393,7 +409,7 @@ def build(
             if venv_quick:
                 log(f'{venv_quick=}: Not installing packages with pip: {names}')
             else:
-                gh_release.run( f'python -m pip install --upgrade {names}')
+                run( f'python -m pip install --upgrade {names}')
         build_isolation_text = ' --no-build-isolation'
     
     env_extra = dict()
@@ -404,12 +420,12 @@ def build(
     if build_flavour:
         env_extra['PYMUPDF_SETUP_FLAVOUR'] = build_flavour
     if wheel:
-        gh_release.run(f'pip wheel{build_isolation_text} -v {pymupdf_dir}', env_extra=env_extra)
+        run(f'pip wheel{build_isolation_text} -v {pymupdf_dir}', env_extra=env_extra)
     else:
-        gh_release.run(f'pip install{build_isolation_text} -v {pymupdf_dir}', env_extra=env_extra)
+        run(f'pip install{build_isolation_text} -v {pymupdf_dir}', env_extra=env_extra)
 
 
-def build_pyodide_wheel():
+def build_pyodide_wheel(pyodide_build_version=None):
     '''
     Build Pyodide wheel.
 
@@ -441,19 +457,23 @@ def build_pyodide_wheel():
     # current devuan pyodide-build is pyodide_build-0.23.4.
     #
     env_extra['PYMUPDF_SETUP_MUPDF_TESSERACT'] = '0'
-    
-    command = f'{pyodide_setup(pymupdf_dir)} && pyodide build --exports pyinit'
-    gh_release.run(command, env_extra=env_extra)
+    setup = pyodide_setup(pymupdf_dir, pyodide_build_version=pyodide_build_version)
+    command = f'{setup} && pyodide build --exports pyinit'
+    run(command, env_extra=env_extra)
     
     # Copy wheel into `wheelhouse/` so it is picked up as a workflow
     # artifact.
     #
-    gh_release.run(f'ls -l {pymupdf_dir}/dist/')
-    gh_release.run(f'mkdir -p {pymupdf_dir}/wheelhouse && cp -p {pymupdf_dir}/dist/* {pymupdf_dir}/wheelhouse/')
-    gh_release.run(f'ls -l {pymupdf_dir}/wheelhouse/')    
+    run(f'ls -l {pymupdf_dir}/dist/')
+    run(f'mkdir -p {pymupdf_dir}/wheelhouse && cp -p {pymupdf_dir}/dist/* {pymupdf_dir}/wheelhouse/')
+    run(f'ls -l {pymupdf_dir}/wheelhouse/')    
 
 
-def pyodide_setup(directory, clean=False):
+def pyodide_setup(
+        directory,
+        clean=False,
+        pyodide_build_version=None,
+        ):
     '''
     Returns a command that will set things up for a pyodide build.
     
@@ -493,13 +513,26 @@ def pyodide_setup(directory, clean=False):
     
     # Create and enter Python venv.
     #
-    venv_pyodide = 'venv_pyodide'
+    # 2024-10-11: we only work with python-3.11; later versions fail with
+    # pyodide-build==0.23.4 because `distutils` not available.
+    if pyodide_build_version:
+        python = sys.executable
+        a, b = sys.version_info[:2]
+        venv_pyodide = f'venv_pyodide_{a}.{b}'
+    else:
+        pyodide_build_version = '0.23.4'
+        venv_pyodide = 'venv_pyodide_3.11'
+        python = sys.executable
+        if sys.version_info[:2] != (3, 11):
+            log(f'Forcing use of python-3.11 because {sys.version=} is not 3.11.')
+            python = 'python3.11'
     if not os.path.exists( f'{directory}/{venv_pyodide}'):
         command += f' && echo "### creating venv {venv_pyodide}"'
-        command += f' && {sys.executable} -m venv {venv_pyodide}'
+        command += f' && {python} -m venv {venv_pyodide}'
     command += f' && . {venv_pyodide}/bin/activate'
     command += f' && echo "### running pip install ..."'
-    command += f' && python -m pip install --upgrade pip wheel pyodide-build==0.23.4'
+    command += f' && python -m pip install --upgrade pip wheel pyodide-build=={pyodide_build_version}'
+    #command += f' && python -m pip install --upgrade pip wheel pyodide-build'
     
     # Run emsdk install scripts and enter emsdk environment.
     #
@@ -512,7 +545,9 @@ def pyodide_setup(directory, clean=False):
     command += ' && echo "### running ./emsdk_env.sh"'
     command += ' && . ./emsdk_env.sh'   # Need leading `./` otherwise weird 'Not found' error.
     
-    if 1:
+    if pyodide_build_version:
+        command += ' && echo "### Not patching emsdk"'
+    else:
         # Make our returned command replace emsdk/upstream/bin/wasm-opt
         # with a script that does nothing, otherwise the linker
         # command fails after it has created the output file. See:
@@ -579,6 +614,7 @@ def pyodide_setup(directory, clean=False):
 def test(
         implementations,
         valgrind,
+        valgrind_args,
         venv_quick=False,
         test_names=None,
         pytest_options=None,
@@ -593,6 +629,8 @@ def test(
             See top-level option `-i`.
         valgrind:
             See top-level option `--valgrind`.
+        valgrind_args:
+            See top-level option `--valgrind-args`.
         venv_quick:
             .
         test_names:
@@ -624,7 +662,7 @@ def test(
         if venv_quick:
             log(f'{venv_quick=}: Not installing test packages: {gh_release.test_packages}')
         else:
-            gh_release.run(f'pip install --upgrade {gh_release.test_packages}')
+            run(f'pip install --upgrade {gh_release.test_packages}')
         run_compound_args = ''
         if implementations:
             run_compound_args += f' -i {implementations}'
@@ -633,14 +671,14 @@ def test(
         env_extra = None
         if valgrind:
             log('Installing valgrind.')
-            gh_release.run(f'sudo apt update')
-            gh_release.run(f'sudo apt install --upgrade valgrind')
-            gh_release.run(f'valgrind --version')
+            run(f'sudo apt update')
+            run(f'sudo apt install --upgrade valgrind')
+            run(f'valgrind --version')
         
             log('Running PyMuPDF tests under valgrind.')
             command = (
                     f'{python} {pymupdf_dir_rel}/tests/run_compound.py{run_compound_args}'
-                        f' valgrind --suppressions={pymupdf_dir_rel}/valgrind.supp --error-exitcode=100 --errors-for-leak-kinds=none --fullpath-after='
+                        f' valgrind --suppressions={pymupdf_dir_rel}/valgrind.supp --error-exitcode=100 --errors-for-leak-kinds=none --fullpath-after= {valgrind_args}'
                         f' {python} -m pytest {pytest_options}{pytest_arg}'
                         )
             env_extra=dict(
@@ -683,12 +721,19 @@ def test(
                     f.write(text2)
         
         log(f'Running tests with tests/run_compound.py and pytest.')
-        gh_release.run(command, env_extra=env_extra, timeout=timeout)
+        run(command, env_extra=env_extra, timeout=timeout)
             
     except subprocess.TimeoutExpired as e:
          log(f'Timeout when running tests.')
          raise
     finally:
+        log(f'\n'
+                f'[As of 2024-10-10 we get warnings from pytest/Python such as:\n'
+                f'    DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute\n'
+                f'This seems to be due to Swig\'s handling of Py_LIMITED_API.\n'
+                f'For details see https://github.com/swig/swig/issues/2881.\n'
+                f']'
+                )
         log('\n' + venv_info(pytest_args=f'{pytest_options} {pytest_arg}'))
 
 
@@ -728,10 +773,6 @@ def wrap_get_requires_for_build_wheel(dir_):
         finally:
             del sys.path[0]
     return ' '.join(ret)
-
-
-def log(text):
-    gh_release.log(text, caller=1)
 
 
 if __name__ == '__main__':

@@ -89,6 +89,14 @@ import test as test_py
 
 pymupdf_dir = os.path.abspath( f'{__file__}/../..')
 
+sys.path.insert(0, pymupdf_dir)
+import pipcl
+del sys.path[0]
+
+log = pipcl.log0
+run = pipcl.run
+
+
 def main():
 
     log( '### main():')
@@ -389,7 +397,8 @@ def build( platform_=None, valgrind=False):
             env_pass('PYMUPDF_SETUP_PY_LIMITED_API')
             CIBW_BUILD_old = env_extra.get('CIBW_BUILD')
             assert CIBW_BUILD_old is not None
-            env_set('CIBW_BUILD', 'cp39*')
+            cp = cps.split()[0]
+            env_set('CIBW_BUILD', cp)
             log(f'Building single wheel.')
             run( f'cibuildwheel{platform_arg}', env_extra=env_extra)
             
@@ -413,7 +422,16 @@ def build( platform_=None, valgrind=False):
             #
             env_set('CIBW_REPAIR_WHEEL_COMMAND', '')
             
-            log(f'Testing on all python versions using wheels in wheelhouse/.')
+            if platform.system() == 'Linux' and env_extra.get('CIBW_ARCHS_LINUX') == 'aarch64':
+                log(f'Testing all Python versions on linux-aarch64 is too slow and is killed by github after 6h.')
+                log(f'Testing on restricted python versions using wheels in wheelhouse/.')
+                # Testing only on first and last python versions.
+                cp1 = cps.split()[0]
+                cp2 = cps.split()[-1]
+                cp = cp1 if cp1 == cp2 else f'{cp1} {cp2}'
+                env_set('CIBW_BUILD', cp)
+            else:
+                log(f'Testing on all python versions using wheels in wheelhouse/.')
             run( f'cibuildwheel{platform_arg}', env_extra=env_extra)
             
         elif inputs_flavours:
@@ -574,49 +592,6 @@ if platform.system() == 'Windows':
 else:
     def relpath(path, start=None):
         return os.path.relpath(path, start)
-
-
-def log(text, caller=0):
-    '''
-    Writes `text` to stdout with prefix showing caller path relative to
-    pymupdf_dir and fn name.
-    '''
-    frame_record = inspect.stack( context=0)[ caller+1]
-    filename    = frame_record.filename
-    line        = frame_record.lineno
-    function    = frame_record.function
-    prefix = f'{relpath(filename, pymupdf_dir)}:{line}:{function}(): '
-    print(textwrap.indent(text, prefix), flush=1)
-
-
-def run(command, env_extra=None, check=1, timeout=None):
-    '''
-    Runs a command using subprocess.run().
-    Args:
-        command:
-            The command to run.
-        env_extra:
-            None or dict containing extra environment variable settings to add
-            to os.environ.
-        check:
-            Whether to raise exception if command fails.
-        timeout:
-            If not None, timeout in seconds; passed directory to
-            subprocess.run(). Note that on MacOS subprocess.run() seems to
-            leave processes running if timeout expires.
-    '''
-    env = None
-    message = 'Running: '
-    if env_extra:
-        env = os.environ.copy()
-        env.update(env_extra)
-        message += '\n[environment:\n'
-        for n, v in env_extra.items():
-            message += f'    {n}={shlex.quote(v)}\n'
-        message += ']\n'
-    message += f'{command}'
-    log(message, caller=1)
-    return subprocess.run(command, check=check, shell=1, env=env, timeout=timeout)
 
 
 def platform_tag():

@@ -632,7 +632,7 @@ def get_sorted_text(
             # convert distance to previous word to multiple spaces
             dist = max(
                 int(round((r.x0 - x1) / r.width * len(t))),
-                0 if x1 == clip.x0 else 1,
+                0 if (x1 == clip.x0 or r.x0 <= x1) else 1,
             )  # number of space characters
 
             ltext += " " * dist + t  # append word string
@@ -5538,8 +5538,8 @@ def recover_char_quad(line_dir: tuple, span: dict, char: dict) -> pymupdf.Quad:
 # -------------------------------------------------------------------
 # Building font subsets using fontTools
 # -------------------------------------------------------------------
-def subset_fonts(doc: pymupdf.Document, verbose: bool = False, fallback: bool = False) -> None:
-    """Build font subsets of a PDF. Requires package 'fontTools'.
+def subset_fonts(doc: pymupdf.Document, verbose: bool = False, fallback: bool = False) -> OptInt:
+    """Build font subsets in a PDF.
 
     Eligible fonts are potentially replaced by smaller versions. Page text is
     NOT rewritten and thus should retain properties like being hidden or
@@ -5548,6 +5548,17 @@ def subset_fonts(doc: pymupdf.Document, verbose: bool = False, fallback: bool = 
     This method by default uses MuPDF's own internal feature to create subset
     fonts. As this is a new function, errors may still occur. In this case,
     please fall back to using the previous version by using "fallback=True".
+    Fallback mode requires the external package 'fontTools'.
+
+    Args:
+        fallback: use the older deprecated implementation.
+        verbose: only used by fallback mode.
+
+    Returns:
+        The new MuPDF-based code returns None.  The deprecated fallback
+        mode returns 0 if there are no fonts to subset.  Otherwise, it
+        returns the decrease in fontsize (the difference in fontsize),
+        measured in bytes.
     """
     # Font binaries: -  "buffer" -> (names, xrefs, (unicodes, glyphs))
     # An embedded font is uniquely defined by its fontbuffer only. It may have

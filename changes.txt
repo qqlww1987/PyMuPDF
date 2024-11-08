@@ -2,6 +2,31 @@ Change Log
 ==========
 
 
+**Changes in version 1.24.13 (2024-10-29)**
+
+* Fixed issues:
+
+  * **Fixed** `3848 <https://github.com/pymupdf/PyMuPDF/issues/3848>`_:  Piximap program crash
+  * **Fixed** `3950 <https://github.com/pymupdf/PyMuPDF/issues/3950>`_:  Unable to consistently extract field labels from PDFs
+  * **Fixed** `3981 <https://github.com/pymupdf/PyMuPDF/issues/3981>`_:  PyMuPDF 1.24.12 with pyinstaller throws error.
+  * **Fixed** `3994 <https://github.com/pymupdf/PyMuPDF/issues/3994>`_:  pix.color_topusage raise Segmentation fault (core dumped)
+
+
+**Changes in version 1.24.12 (2024-10-21)**
+
+* Fixed issues:
+
+  * **Fixed** `3914 <https://github.com/pymupdf/PyMuPDF/issues/3914>`_:  Ability to print MuPDF errors to logging instead of stdout
+  * **Fixed** `3916 <https://github.com/pymupdf/PyMuPDF/issues/3916>`_:  insert_htmlbox error: int too large to convert to float
+  * **Fixed** `3950 <https://github.com/pymupdf/PyMuPDF/issues/3950>`_:  Unable to consistently extract field labels from PDFs
+
+* Supported Python versions are now 3.9-3.13.
+
+  * Dropped support for Python-3.8 because end-of-life.
+  * Added support for Python-3.13 because now released.
+  * See: https://devguide.python.org/versions/
+
+
 **Changes in version 1.24.11 (2024-10-03)**
 
 * Use MuPDF-1.24.10.
